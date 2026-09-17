@@ -7,8 +7,18 @@ const FRAMEWORKS=new Set(['auto','ifrs','ias','gaap','audit','tax','cost','manag
 const MODEL='gpt-5.6-luna';
 const BATCH_SIZE=4;
 const MAX_CONCURRENCY=2;
-const CALL_TIMEOUT_MS=42000;
+const CALL_TIMEOUT_MS=50000;
 const MAX_RETRIES=2;
+const OFFICIAL_SOURCES={
+  ifrs:{name:'IFRS Foundation / IASB',url:'https://www.ifrs.org/'},
+  ias:{name:'IFRS Foundation / IASB',url:'https://www.ifrs.org/'},
+  gaap:{name:'FASB Accounting Standards Codification',url:'https://asc.fasb.org/'},
+  audit:{name:'IAASB',url:'https://www.iaasb.org/'},
+  tax:{name:'الجهة الضريبية المختصة حسب الدولة',url:''},
+  cost:{name:'مرجع أكاديمي/مهني في محاسبة التكاليف',url:''},
+  management:{name:'مرجع أكاديمي/مهني في المحاسبة الإدارية',url:''},
+  auto:{name:'المرجع الرسمي الأنسب للموضوع',url:''}
+};
 
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function extractText(data){
@@ -19,86 +29,103 @@ function parseJson(text){
   if(!text) return null;
   try{return JSON.parse(text.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim())}catch{return null}
 }
-function keyOf(s){return String(s||'').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'').slice(0,220)}
-function cleanQuestion(q){
+function keyOf(s){return String(s||'').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'').slice(0,240)}
+function normalizeText(s){return String(s||'').trim().replace(/\s+/g,' ')}
+function uniqueStrings(arr){const seen=new Set();return arr.filter(x=>{const k=normalizeText(x).toLowerCase();if(!k||seen.has(k))return false;seen.add(k);return true})}
+function safeReference(ref,framework){
+  let r=normalizeText(ref);
+  r=r.replace(/(?:paragraph|para\.?|فقرة)\s*\d+(?:\.\d+)*/gi,'').replace(/\s{2,}/g,' ').trim();
+  const src=OFFICIAL_SOURCES[framework]||OFFICIAL_SOURCES.auto;
+  if(!r) r=src.name;
+  if(src.url&&!r.includes(src.url)) r=`${r} — ${src.url}`;
+  return r;
+}
+function normalizeAnswerToChoice(answer,choices){
+  const a=normalizeText(answer);
+  if(!choices.length) return a;
+  const exact=choices.find(c=>normalizeText(c).toLowerCase()===a.toLowerCase());
+  if(exact) return normalizeText(exact);
+  const letter=a.match(/^([A-D])(?:[\).:\-\s]|$)/i)?.[1]?.toUpperCase();
+  if(letter){const idx=letter.charCodeAt(0)-65;if(choices[idx])return normalizeText(choices[idx]);}
+  const contained=choices.find(c=>a.includes(normalizeText(c))||normalizeText(c).includes(a));
+  return contained?normalizeText(contained):a;
+}
+function cleanQuestion(q,framework){
   if(!q||typeof q.question!=='string'||typeof q.answer!=='string') return null;
-  const question=q.question.trim(), answer=String(q.answer).trim();
-  if(question.length<8||answer.length<1) return null;
-  let choices=Array.isArray(q.choices)?q.choices.map(String).map(x=>x.trim()).filter(Boolean).slice(0,4):[];
+  const question=normalizeText(q.question), answerRaw=normalizeText(q.answer);
+  if(question.length<12||!answerRaw) return null;
   const type=['mcq','tf','short','case','calculation'].includes(q.type)?q.type:'short';
+  let choices=uniqueStrings(Array.isArray(q.choices)?q.choices.slice(0,6).map(normalizeText):[]);
   if(type==='mcq'&&choices.length!==4) return null;
-  if(type==='tf'&&choices.length===0) choices=['صح','خطأ'];
+  if(type==='tf') choices=[];
+  if(!['mcq','tf'].includes(type)) choices=[];
+  const answer=normalizeAnswerToChoice(answerRaw,choices);
+  if(type==='mcq'&&!choices.some(c=>normalizeText(c).toLowerCase()===answer.toLowerCase())) return null;
+  const explanation=normalizeText(q.explanation);
+  if(explanation.length<20) return null;
   return {
-    question,
-    choices,
-    answer,
-    explanation:String(q.explanation||'').trim(),
+    question,choices,answer,explanation,
     difficulty:['easy','medium','hard','professional'].includes(q.difficulty)?q.difficulty:'medium',
     type,
-    topic:String(q.topic||'').trim(),
-    reference:String(q.reference||'').trim(),
-    learning_objective:String(q.learning_objective||'').trim()
+    topic:normalizeText(q.topic),
+    reference:safeReference(q.reference,framework),
+    source_url:(OFFICIAL_SOURCES[framework]||OFFICIAL_SOURCES.auto).url,
+    learning_objective:normalizeText(q.learning_objective),
+    quality_checked:true
   };
 }
+function isRetryableStatus(status){return status===408||status===409||status===429||status>=500}
 
-async function oneOpenAICall({apiKey,instructions,input,maxOutput=4500}){
+async function oneOpenAICall({apiKey,instructions,input,maxOutput=5000}){
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),CALL_TIMEOUT_MS);
   try{
     const r=await fetch('https://api.openai.com/v1/responses',{
-      method:'POST',
-      signal:controller.signal,
+      method:'POST',signal:controller.signal,
       headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},
       body:JSON.stringify({
-        model:MODEL,
-        instructions,
-        input,
-        reasoning:{effort:'low'},
+        model:MODEL,instructions,input,
+        reasoning:{effort:'medium'},
         text:{format:{type:'json_object'}},
         max_output_tokens:maxOutput
       })
     });
     const data=await r.json().catch(()=>({}));
-    if(!r.ok){
-      const msg=data?.error?.message||`OpenAI API error (${r.status})`;
-      const e=new Error(msg);e.status=r.status;throw e;
-    }
+    if(!r.ok){const e=new Error(data?.error?.message||`OpenAI API error (${r.status})`);e.status=r.status;throw e;}
     const parsed=parseJson(extractText(data));
     if(!parsed||!Array.isArray(parsed.questions)) throw new Error('عاد محرك الذكاء الاصطناعي بنتيجة غير قابلة للقراءة.');
     return parsed.questions;
-  } finally { clearTimeout(timer); }
+  }finally{clearTimeout(timer)}
 }
-
 async function callOpenAI(opts){
   let lastErr;
   for(let attempt=0;attempt<=MAX_RETRIES;attempt++){
     try{return await oneOpenAICall(opts)}catch(e){
-      lastErr=e;
-      const status=Number(e?.status||0);
-      const retryable=e?.name==='AbortError'||status===408||status===409||status===429||status>=500||!status;
-      if(!retryable||attempt===MAX_RETRIES) break;
-      await sleep(500*(attempt+1)+Math.floor(Math.random()*350));
+      lastErr=e;const status=Number(e?.status||0);
+      const retry=e?.name==='AbortError'||isRetryableStatus(status)||!status;
+      if(!retry||attempt===MAX_RETRIES) break;
+      await sleep(650*(attempt+1)+Math.floor(Math.random()*400));
     }
   }
-  if(lastErr?.name==='AbortError') throw new Error('انتهت مهلة الاتصال بمحرك الذكاء الاصطناعي. تمت إعادة المحاولة تلقائيًا دون نجاح.');
+  if(lastErr?.name==='AbortError') throw new Error('انتهت مهلة الاتصال بمحرك الذكاء الاصطناعي بعد إعادة المحاولة.');
   throw lastErr||new Error('تعذر الاتصال بمحرك الذكاء الاصطناعي.');
 }
-
 async function runPool(tasks,limit){
   const out=new Array(tasks.length);let next=0;
-  async function worker(){
-    while(true){
-      const i=next++;if(i>=tasks.length) return;
-      try{out[i]={status:'fulfilled',value:await tasks[i]()}}catch(reason){out[i]={status:'rejected',reason}}
-    }
-  }
-  await Promise.all(Array.from({length:Math.min(limit,tasks.length)},()=>worker()));
-  return out;
+  async function worker(){while(true){const i=next++;if(i>=tasks.length)return;try{out[i]={status:'fulfilled',value:await tasks[i]()}}catch(reason){out[i]={status:'rejected',reason}}}}
+  await Promise.all(Array.from({length:Math.min(limit,tasks.length)},()=>worker()));return out;
+}
+function diversityPlan(type,count){
+  if(type!=='mixed') return `${count} questions all of type ${type}.`;
+  const mcq=Math.max(2,Math.round(count*.3)),calc=Math.max(1,Math.round(count*.2)),caseN=Math.max(1,Math.round(count*.2)),tf=Math.max(1,Math.round(count*.15));
+  const short=Math.max(1,count-mcq-calc-caseN-tf);
+  return `Across the full set target approximately ${mcq} MCQ, ${tf} true/false, ${short} short-answer, ${caseN} applied case, and ${calc} calculation/journal-entry questions. Do not let one type dominate.`;
 }
 
 export default async function handler(req,res){
   res.setHeader('Cache-Control','no-store');
   res.setHeader('Content-Type','application/json; charset=utf-8');
+  res.setHeader('X-Content-Type-Options','nosniff');
   if(req.method!=='POST') return res.status(405).json({error:'Method not allowed'});
 
   const b=req.body||{};
@@ -109,7 +136,6 @@ export default async function handler(req,res){
   const exam=EXAMS.has(b.exam)?b.exam:'skills';
   const framework=FRAMEWORKS.has(b.framework)?b.framework:'auto';
   const count=Math.max(10,Math.min(30,Number(b.count)||10));
-
   if(content.length<8) return res.status(400).json({error:'اكتب موضوعًا أو حالة عملية أو فكرة محاسبية بتفصيل كافٍ.'});
   if(content.length>30000) return res.status(400).json({error:'المدخل طويل جدًا. الحد 30,000 حرف.'});
   if(!process.env.OPENAI_API_KEY) return res.status(503).json({error:'مفتاح OpenAI غير مفعّل في Vercel.'});
@@ -120,60 +146,38 @@ export default async function handler(req,res){
   const examRule={skills:'accounting skill development',university:'university assessment',jobs:'accounting job interview and employment assessment',professional:'professional accounting exam preparation',practice:'workplace practice'}[exam];
   const fw={auto:'choose only standards/frameworks genuinely relevant to the topic',ifrs:'IFRS Accounting Standards',ias:'IAS/IFRS Accounting Standards',gaap:'US GAAP when relevant',audit:'ISA auditing standards when relevant',tax:'tax accounting; clearly state that tax rules depend on jurisdiction',cost:'cost accounting',management:'management accounting'}[framework];
 
-  const baseInstructions=`You are a senior accounting educator, assessment designer, and practicing-accounting subject matter expert. Write in ${lang}. Context: ${examRule}. Question design: ${typeRule}. Difficulty: ${diffRule}. Framework: ${fw}. Use established accounting knowledge. Never fabricate paragraph numbers, standard requirements, tax rates, laws, URLs, or authorities. If jurisdiction/date is required but absent, make the question jurisdiction-neutral or identify the assumption. Calculations must be internally consistent. Journal entries must balance. MCQs must have exactly 4 plausible options and one correct answer. Avoid duplicates, trivia, trick wording, and answer clues. Vary recall, application, analysis, calculation, judgment, error detection, journal entries, financial-statement impact, controls, and realistic workplace decisions where relevant. Keep explanations concise but educational. References must name only a real relevant framework/standard; leave reference empty if uncertain. Return ONLY a valid JSON object with this exact shape: {"questions":[{"question":"...","choices":[],"answer":"...","explanation":"...","difficulty":"medium","type":"short","topic":"...","reference":"","learning_objective":"..."}]}. Do not output markdown or text outside the JSON object.`;
+  const baseInstructions=`You are a senior accounting educator, exam writer, auditor/controller-level practitioner, and assessment quality reviewer. Write in ${lang}. Context: ${examRule}. Question design: ${typeRule}. Difficulty: ${diffRule}. Framework: ${fw}.\n${diversityPlan(type,count)}\nQuality rules:\n1) Use established accounting knowledge and realistic amounts/dates.\n2) Never invent paragraph numbers, tax rates, legal rules, URLs, or authorities. If exact jurisdiction/date is missing, state the assumption or keep the question jurisdiction-neutral.\n3) Calculations must be arithmetically consistent; journal entries must balance; explain reasoning, not just the final answer.\n4) MCQs must have exactly four unique plausible choices and one unambiguous correct answer.\n5) Avoid duplicates, trivia, trick wording, answer clues, vague pronouns, and questions whose answer depends on missing facts.\n6) Prefer application, analysis, professional judgment, controls, error detection, financial-statement impact, and realistic workplace decisions over pure memorization.\n7) For IFRS/IAS/GAAP/ISA references, cite the standard/topic name only unless certain of a specific paragraph. Do not fabricate paragraph numbers.\n8) For tax/zakat questions, identify that rates and rules depend on jurisdiction and date unless the user supplied them.\nReturn ONLY a valid JSON object with this exact shape: {"questions":[{"question":"...","choices":[],"answer":"...","explanation":"...","difficulty":"medium","type":"short","topic":"...","reference":"","learning_objective":"..."}]}. Do not output markdown or text outside the JSON object.`;
 
   try{
-    const sizes=[];for(let left=count;left>0;left-=BATCH_SIZE) sizes.push(Math.min(BATCH_SIZE,left));
-    const angles=['concepts and recognition','applied workplace judgment','calculations and journal entries','error detection and controls','financial statement impact','professional exam synthesis','presentation and disclosure','audit evidence and controls'];
+    const sizes=[];for(let left=count;left>0;left-=BATCH_SIZE)sizes.push(Math.min(BATCH_SIZE,left));
+    const angles=['recognition and measurement','applied workplace judgment','calculations and journal entries','error detection and internal controls','financial statement presentation and disclosure','professional exam synthesis','audit evidence and controls'];
     const tasks=sizes.map((n,i)=>()=>callOpenAI({
-      apiKey:process.env.OPENAI_API_KEY,
-      instructions:baseInstructions,
-      input:`Return a valid JSON object only. Create EXACTLY ${n} distinct accounting questions for batch ${i+1}. Emphasize ${angles[i%angles.length]}. Do not repeat questions within this batch.\n\nUSER MATERIAL:\n${content}`,
-      maxOutput:4200
+      apiKey:process.env.OPENAI_API_KEY,instructions:baseInstructions,
+      input:`Return a valid JSON object only. Create EXACTLY ${n} distinct questions for batch ${i+1}. Emphasize ${angles[i%angles.length]}. Keep every numeric case internally solvable. Do not repeat ideas within this batch.\n\nUSER MATERIAL:\n${content}`,
+      maxOutput:5000
     }));
+    const settled=await runPool(tasks,MAX_CONCURRENCY),raw=[],failures=[];
+    for(const s of settled){s.status==='fulfilled'?raw.push(...s.value):failures.push(String(s.reason?.message||'فشل غير معروف'))}
 
-    const settled=await runPool(tasks,MAX_CONCURRENCY);
-    const raw=[], failures=[];
-    for(const s of settled){
-      if(s.status==='fulfilled') raw.push(...s.value);
-      else failures.push(String(s.reason?.message||'فشل غير معروف'));
-    }
-
-    const seen=new Set(), questions=[];
-    const addItems=items=>{
-      for(const item of items){
-        const q=cleanQuestion(item);if(!q) continue;
-        const k=keyOf(q.question);if(!k||seen.has(k)) continue;
-        seen.add(k);questions.push(q);if(questions.length>=count) break;
-      }
-    };
+    const seen=new Set(),questions=[];
+    const addItems=items=>{for(const item of items){const q=cleanQuestion(item,framework);if(!q)continue;const k=keyOf(q.question);if(!k||seen.has(k))continue;seen.add(k);questions.push(q);if(questions.length>=count)break;}};
     addItems(raw);
 
-    let repairAttempts=0;
-    while(questions.length<count&&repairAttempts<2){
-      repairAttempts++;
-      const missing=count-questions.length;
-      const avoid=questions.slice(-16).map((q,i)=>`${i+1}. ${q.question}`).join('\n');
+    for(let repair=0;questions.length<count&&repair<3;repair++){
+      const missing=count-questions.length,avoid=questions.slice(-18).map((q,i)=>`${i+1}. ${q.question}`).join('\n');
       try{
         const extra=await callOpenAI({
-          apiKey:process.env.OPENAI_API_KEY,
-          instructions:baseInstructions,
-          input:`Return a valid JSON object only. Create EXACTLY ${Math.min(missing,6)} NEW questions. They must be materially different from the questions below.\nAVOID DUPLICATING:\n${avoid||'none'}\n\nUSER MATERIAL:\n${content}`,
-          maxOutput:4300
+          apiKey:process.env.OPENAI_API_KEY,instructions:baseInstructions,
+          input:`Return a valid JSON object only. Create EXACTLY ${Math.min(missing,6)} NEW questions. They must be materially different from every question below and must pass all quality rules.\nAVOID DUPLICATING:\n${avoid||'none'}\n\nUSER MATERIAL:\n${content}`,
+          maxOutput:5200
         });
         addItems(extra);
-      }catch(e){failures.push(String(e?.message||'تعذر إكمال الدفعة الأخيرة'));break;}
+      }catch(e){failures.push(String(e?.message||'تعذر إكمال دفعة الإصلاح'));break;}
     }
 
-    if(questions.length<10){
-      return res.status(502).json({error:`تم إنشاء ${questions.length} أسئلة صالحة فقط. ${failures[0]?`السبب: ${failures[0]}`:'أعد المحاولة.'}`,partial:questions});
-    }
+    if(questions.length<10) return res.status(502).json({error:`تم إنشاء ${questions.length} أسئلة صالحة فقط من أصل ${count}. لم نحفظ نتيجة ناقصة. ${failures[0]?`التفصيل: ${failures[0]}`:'أعد المحاولة بعد قليل.'}`,partial:questions,canRetry:true});
 
-    return res.status(200).json({
-      questions:questions.slice(0,count),
-      meta:{count:Math.min(questions.length,count),requested:count,framework,exam,model:MODEL,batched:true,retries:MAX_RETRIES,warnings:failures.slice(0,2)}
-    });
-  }catch(e){
-    return res.status(500).json({error:`حدث خطأ في الخادم: ${e?.message||'غير معروف'}`});
-  }
+    const source=OFFICIAL_SOURCES[framework]||OFFICIAL_SOURCES.auto;
+    return res.status(200).json({questions:questions.slice(0,count),meta:{count:Math.min(questions.length,count),requested:count,framework,exam,model:MODEL,quality_validation:true,references_normalized:true,official_source:source,warnings:failures.slice(0,2),generated_at:new Date().toISOString()}});
+  }catch(e){return res.status(500).json({error:`حدث خطأ في الخادم: ${e?.message||'غير معروف'}`,canRetry:true});}
 }
