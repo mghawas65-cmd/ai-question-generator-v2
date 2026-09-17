@@ -2,7 +2,7 @@
   "functions": {
     "api/generate.js": {"maxDuration": 60},
     "api/diagnose.js": {"maxDuration": 30},
-    "api/test-generate.js": {"maxDuration": 60}
+    "api/smoke.js": {"maxDuration": 60}
   },
   "headers": [
     {
