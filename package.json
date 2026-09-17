@@ -1,0 +1,7 @@
+{
+  "name":"ai-question-generator-v2",
+  "version":"1.0.0",
+  "private":true,
+  "description":"Independent Arabic AI question generator",
+  "engines":{"node":">=20"}
+}
