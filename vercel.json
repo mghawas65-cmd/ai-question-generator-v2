@@ -1,4 +1,25 @@
 {
-  "functions": {"api/generate.js": {"maxDuration": 60}},
-  "headers": [{"source":"/(.*)","headers":[{"key":"X-Content-Type-Options","value":"nosniff"},{"key":"Referrer-Policy","value":"strict-origin-when-cross-origin"}]}]
+  "functions": {
+    "api/generate.js": {"maxDuration": 60},
+    "api/diagnose.js": {"maxDuration": 30},
+    "api/test-generate.js": {"maxDuration": 60}
+  },
+  "headers": [
+    {
+      "source":"/api/(.*)",
+      "headers":[
+        {"key":"Cache-Control","value":"no-store, max-age=0"},
+        {"key":"X-Content-Type-Options","value":"nosniff"}
+      ]
+    },
+    {
+      "source":"/(.*)",
+      "headers":[
+        {"key":"X-Content-Type-Options","value":"nosniff"},
+        {"key":"Referrer-Policy","value":"strict-origin-when-cross-origin"},
+        {"key":"X-Frame-Options","value":"SAMEORIGIN"},
+        {"key":"Permissions-Policy","value":"camera=(), microphone=(), geolocation=()"}
+      ]
+    }
+  ]
 }
