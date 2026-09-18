@@ -14,3 +14,16 @@ jobs:
       - run: node --check api/generate.js
       - run: node --check api/report.js
       - run: npm test
+      - name: Install browser QA
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Responsive browser QA
+        run: |
+          python3 -m http.server 4173 >/tmp/accountant-http.log 2>&1 &
+          node tests/responsive-check.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: responsive-screenshots
+          path: artifacts/
