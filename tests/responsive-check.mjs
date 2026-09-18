@@ -42,6 +42,11 @@ for(const t of targets){
     for(const id of ['exportData','importData'])if(!(await page.locator('#'+id).isVisible()))failures.push(`desktop: #${id} not visible`);
     const arabic=await page.locator('#bankList').textContent();
     if(!/[\u0600-\u06FF]/.test(arabic||''))failures.push('desktop: Arabic bank text missing');
+    const firstAnswer=page.locator('#bankList .q').first();
+    if(await firstAnswer.locator('.answerReveal').isVisible())failures.push('desktop: answer should be collapsed initially');
+    await firstAnswer.locator('.answerToggle').click();
+    if(!(await firstAnswer.locator('.answerReveal').isVisible()))failures.push('desktop: answer did not reveal after click');
+    if((await firstAnswer.locator('.answerToggle').getAttribute('aria-expanded'))!=='true')failures.push('desktop: answer button aria-expanded not updated');
     await page.emulateMedia({media:'print'});
     await page.screenshot({path:'artifacts/arabic-print-preview.png',fullPage:true});
     await page.pdf({path:'artifacts/arabic-bank.pdf',format:'A4',printBackground:true});
