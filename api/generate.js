@@ -27,6 +27,17 @@ function extractText(data){
 }
 function parseJson(text){if(!text)return null;try{return JSON.parse(text.replace(/^\`\`\`(?:json)?\s*/i,'').replace(/\s*\`\`\`$/,'').trim())}catch{return null}}
 function keyOf(s){return String(s||'').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'').slice(0,220)}
+function auditSample(text){
+  let h=2166136261;
+  for(const ch of String(text||'')){h^=ch.codePointAt(0);h=Math.imul(h,16777619)}
+  return (Math.abs(h>>>0)%10)===0;
+}
+function reviewReason(q,framework,content){
+  if(isTaxLike(framework,content))return 'محتوى ضريبي/زكوي عالي الحساسية';
+  if(!q.verified||q.verification_confidence<0.85)return 'ثقة التحقق الآلي أقل من الحد المرتفع';
+  if(auditSample(q.question))return 'عينة تدقيق بشرية دورية (10%)';
+  return '';
+}
 function validDate(s){return /^\d{4}-\d{2}-\d{2}$/.test(s)&&!Number.isNaN(Date.parse(s+'T00:00:00Z'))}
 function today(){return new Date().toISOString().slice(0,10)}
 function normalizeAnswer(s){return String(s||'').trim().toLowerCase().replace(/[\s.،,:؛!?]/g,'')}
@@ -208,9 +219,11 @@ Return ONLY a valid JSON object with {"questions":[{"question":"...","choices":[
         // Exact paragraph references are never accepted merely because a model generated them.
         // In this release they are shown only when the user material itself contains the same citation.
         if(merged.verification_confidence<0.85||!citationSupportedByUserMaterial(merged.paragraph_reference,content))merged.paragraph_reference='';
+        merged.human_review_reason=reviewReason(merged,framework,content);
+        merged.human_review_required=Boolean(merged.human_review_reason);
         final.push(merged);
       }
-    }else final=proposed.map(q=>({...q,verified:false,verification_confidence:0,verification_notes:'لم تكتمل المراجعة الآلية؛ تحقّق من المصدر الرسمي قبل الاعتماد.',paragraph_reference:''}));
+    }else final=proposed.map(q=>({...q,verified:false,verification_confidence:0,verification_notes:'لم تكتمل المراجعة الآلية؛ تحقّق من المصدر الرسمي قبل الاعتماد.',paragraph_reference:'',human_review_required:true,human_review_reason:'لم تكتمل المراجعة الآلية'}));
 
     const fseen=new Set();final=final.filter(q=>{const k=keyOf(q.question);if(!k||fseen.has(k))return false;fseen.add(k);return true}).slice(0,count);
     let repairAttempts=0;
@@ -219,12 +232,12 @@ Return ONLY a valid JSON object with {"questions":[{"question":"...","choices":[
       const avoid=final.slice(-16).map((q,i)=>`${i+1}. ${q.question}`).join('\n');
       try{
         const d=await callOpenAI({apiKey:process.env.OPENAI_API_KEY,instructions:baseInstructions,input:`Return JSON only. Create EXACTLY ${missing} new questions materially different from:\n${avoid||'none'}\nUSER MATERIAL:\n${content}`,maxOutput:5000});
-        for(const item of d.questions||[]){const q=cleanQuestion(item,{framework,jurisdiction,asOf});if(!q)continue;const k=keyOf(q.question);if(!k||fseen.has(k))continue;fseen.add(k);final.push({...q,verified:false,verification_confidence:0,verification_notes:'أضيف في مرحلة الاستكمال؛ راجع المصدر الرسمي.',paragraph_reference:''});if(final.length>=count)break}
+        for(const item of d.questions||[]){const q=cleanQuestion(item,{framework,jurisdiction,asOf});if(!q)continue;const k=keyOf(q.question);if(!k||fseen.has(k))continue;fseen.add(k);final.push({...q,verified:false,verification_confidence:0,verification_notes:'أضيف في مرحلة الاستكمال؛ راجع المصدر الرسمي.',paragraph_reference:'',human_review_required:true,human_review_reason:'سؤال استكمالي لم يمر بالمراجعة الثانية'});if(final.length>=count)break}
       }catch(e){failures.push(String(e?.message||e));break}
     }
     if(final.length<10)return res.status(502).json({error:`تم إنشاء ${final.length} أسئلة صالحة فقط بعد التحقق. ${failures[0]||'أعد المحاولة.'}`,partial:final});
 
-    const data={questions:final.slice(0,count),meta:{count:Math.min(final.length,count),requested:count,framework,jurisdiction,asOf,model:MODEL,reviewModel:REVIEW_MODEL,reviewFailed,cached:false,warnings:failures.slice(0,3),disclaimer:'محتوى تدريبي مولّد بالذكاء الاصطناعي؛ تحقّق من المصدر الرسمي قبل قرار مهني أو اختبار رسمي.'}};
+    const data={questions:final.slice(0,count),meta:{count:Math.min(final.length,count),requested:count,framework,jurisdiction,asOf,model:MODEL,reviewModel:REVIEW_MODEL,reviewFailed,cached:false,humanReviewQueued:final.slice(0,count).filter(q=>q.human_review_required).length,warnings:failures.slice(0,3),disclaimer:'محتوى تدريبي مولّد بالذكاء الاصطناعي؛ تحقّق من المصدر الرسمي قبل قرار مهني أو اختبار رسمي.'}};
     cache.set(cacheKey,{at:Date.now(),data});
     return res.status(200).json(data);
   }catch(e){return res.status(500).json({error:`حدث خطأ في الخادم: ${e?.message||'غير معروف'}`})}
