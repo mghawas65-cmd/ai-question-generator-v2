@@ -30,6 +30,14 @@ function keyOf(s){return String(s||'').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'
 function validDate(s){return /^\d{4}-\d{2}-\d{2}$/.test(s)&&!Number.isNaN(Date.parse(s+'T00:00:00Z'))}
 function today(){return new Date().toISOString().slice(0,10)}
 function normalizeAnswer(s){return String(s||'').trim().toLowerCase().replace(/[\s.،,:؛!?]/g,'')}
+function citationSupportedByUserMaterial(ref,content){
+  const r=cleanText(ref,200).toLowerCase();
+  if(!r)return false;
+  const c=String(content||'').toLowerCase();
+  if(c.includes(r))return true;
+  const compact=x=>x.replace(/[\s():،؛-]+/g,'');
+  return compact(c).includes(compact(r));
+}
 function isTaxLike(f,content){return ['tax','zakat'].includes(f)||/(ضريب|زكاة|vat|tax|zakat)/i.test(content)}
 function officialSource(framework,jurisdiction){
   if(framework==='gaap'||jurisdiction==='us') return 'https://asc.fasb.org/';
@@ -197,7 +205,9 @@ Return ONLY a valid JSON object with {"questions":[{"question":"...","choices":[
         const idx=Number(item.index),base=sourceMap.get(idx);if(!base)continue;
         const merged=cleanQuestion({...base,...item},{framework,jurisdiction,asOf});if(!merged)continue;
         if(merged.verification_confidence<0.65)merged.verified=false;
-        if(merged.verification_confidence<0.85)merged.paragraph_reference='';
+        // Exact paragraph references are never accepted merely because a model generated them.
+        // In this release they are shown only when the user material itself contains the same citation.
+        if(merged.verification_confidence<0.85||!citationSupportedByUserMaterial(merged.paragraph_reference,content))merged.paragraph_reference='';
         final.push(merged);
       }
     }else final=proposed.map(q=>({...q,verified:false,verification_confidence:0,verification_notes:'لم تكتمل المراجعة الآلية؛ تحقّق من المصدر الرسمي قبل الاعتماد.',paragraph_reference:''}));
