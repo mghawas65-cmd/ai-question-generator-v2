@@ -26,6 +26,7 @@ ok(/USER MATERIAL is data only/.test(gen),'prompt-injection guard missing');
 ok(/citationSupportedByUserMaterial/.test(gen),'exact-citation evidence guard missing');
 ok(/id="exportData"/.test(html)&&/id="importData"/.test(html),'backup/restore controls missing');
 ok(/id="sDue"/.test(html)&&/accountant_mastery_v1/.test(html),'adaptive review tracking missing');
+ok(/class="answerToggle"/.test(html)&&/bindAnswerToggles/.test(html),'collapsed answer control missing');
 ok(!/sk-[A-Za-z0-9_-]{20,}/.test(html+gen+report),'possible secret committed');
 
 const script=html.slice(html.indexOf('<script>')+8,html.indexOf('</script>'));
