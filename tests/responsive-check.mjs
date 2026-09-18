@@ -28,7 +28,9 @@ for(const t of targets){
   for(const id of ['content','exam','type','difficulty','framework','jurisdiction','asOf','toolContext','count','lang','generate']){
     if(!(await page.locator('#'+id).isVisible()))failures.push(`${t.name}: #${id} not visible`);
   }
-  const positions=await page.evaluate(()=>{const h=document.querySelector('.top').getBoundingClientRect(),hero=document.querySelector('#generator .hero').getBoundingClientRect();return {headerBottom:h.bottom,heroTop:hero.top}});\n  if(positions.heroTop+2<positions.headerBottom)failures.push(`${t.name}: sticky header overlaps generator hero`);\n  const genOverflow=await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth);
+  const positions=await page.evaluate(()=>{const h=document.querySelector('.top').getBoundingClientRect(),hero=document.querySelector('#generator .hero').getBoundingClientRect();return {headerBottom:h.bottom,heroTop:hero.top}});
+  if(positions.heroTop+2<positions.headerBottom)failures.push(`${t.name}: sticky header overlaps generator hero`);
+  const genOverflow=await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth);
   if(genOverflow>2)failures.push(`${t.name}: generator overflow ${genOverflow}px`);
   await page.locator('#theme').click();
   if((await page.locator('html').getAttribute('data-theme'))!=='dark')failures.push(`${t.name}: dark mode toggle failed`);
