@@ -1,24 +1,60 @@
 {
   "functions": {
-    "api/generate.js": {"maxDuration": 60},
-    "api/diagnose.js": {"maxDuration": 30},
-    "api/smoke.js": {"maxDuration": 60}
+    "api/generate.js": {
+      "maxDuration": 60
+    },
+    "api/diagnose.js": {
+      "maxDuration": 30
+    },
+    "api/smoke.js": {
+      "maxDuration": 60
+    }
   },
   "headers": [
     {
-      "source":"/api/(.*)",
-      "headers":[
-        {"key":"Cache-Control","value":"no-store, max-age=0"},
-        {"key":"X-Content-Type-Options","value":"nosniff"}
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, max-age=0"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
       ]
     },
     {
-      "source":"/(.*)",
-      "headers":[
-        {"key":"X-Content-Type-Options","value":"nosniff"},
-        {"key":"Referrer-Policy","value":"strict-origin-when-cross-origin"},
-        {"key":"X-Frame-Options","value":"SAMEORIGIN"},
-        {"key":"Permissions-Policy","value":"camera=(), microphone=(), geolocation=()"}
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=31536000; includeSubDomains"
+        },
+        {
+          "key": "Cross-Origin-Opener-Policy",
+          "value": "same-origin"
+        }
       ]
     }
   ]
