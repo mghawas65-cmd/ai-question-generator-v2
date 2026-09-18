@@ -35,6 +35,19 @@ for(const t of targets){
   await page.locator('#theme').click();
   if((await page.locator('html').getAttribute('data-theme'))!=='dark')failures.push(`${t.name}: dark mode toggle failed`);
   await page.screenshot({path:`artifacts/${t.name}.png`,fullPage:true});
+  if(t.name==='desktop'){
+    await page.locator('.navlinks [data-go="bank"]').click();
+    const seedCount=await page.locator('#bankList .q').count();
+    if(seedCount<10)failures.push(`desktop: expected at least 10 seeded questions, got ${seedCount}`);
+    for(const id of ['exportData','importData'])if(!(await page.locator('#'+id).isVisible()))failures.push(`desktop: #${id} not visible`);
+    const arabic=await page.locator('#bankList').textContent();
+    if(!/[\u0600-\u06FF]/.test(arabic||''))failures.push('desktop: Arabic bank text missing');
+    await page.emulateMedia({media:'print'});
+    await page.screenshot({path:'artifacts/arabic-print-preview.png',fullPage:true});
+    await page.pdf({path:'artifacts/arabic-bank.pdf',format:'A4',printBackground:true});
+    if(fs.statSync('artifacts/arabic-bank.pdf').size<20000)failures.push('desktop: generated Arabic PDF is unexpectedly small');
+    await page.emulateMedia({media:'screen'});
+  }
   await page.close();
 }
 await browser.close();
