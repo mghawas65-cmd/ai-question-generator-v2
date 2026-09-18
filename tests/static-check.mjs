@@ -8,7 +8,7 @@ const ok=(cond,msg)=>{if(!cond)failures.push(msg)};
 
 ok(/<html lang="ar" dir="rtl">/.test(html),'Arabic RTL root missing');
 ok(/name="viewport"/.test(html),'viewport meta missing');
-ok(/@media\(max-width:760px\)/.test(html),'mobile breakpoint 760 missing');
+ok(/@media\(max-width:760px\)/.test(html),'mobile/tablet breakpoint 900 missing');
 ok(/@media\(max-width:390px\)/.test(html),'small-phone breakpoint 390 missing');
 ok(/id="jurisdiction"/.test(html),'jurisdiction control missing');
 ok(/id="asOf"/.test(html),'as-of date control missing');
@@ -34,4 +34,4 @@ if(failures.length){
   process.exit(1);
 }
 console.log('STATIC QA PASSED');
-console.log(JSON.stringify({seedQuestions:(html.match(/id:'seed-/g)||[]).length,rtl:true,mobileBreakpoints:[390,760],verification:true,reporting:true,darkMode:true},null,2));
+console.log(JSON.stringify({seedQuestions:(html.match(/id:'seed-/g)||[]).length,rtl:true,mobileBreakpoints:[390,900],verification:true,reporting:true,darkMode:true},null,2));
