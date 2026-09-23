@@ -122,7 +122,15 @@ async function oneOpenAICall({apiKey,model=MODEL,instructions,input,maxOutput=45
       body:JSON.stringify({model,instructions,input,reasoning:{effort},text:{format:{type:'json_object'}},max_output_tokens:maxOutput})
     });
     const data=await r.json().catch(()=>({}));
-    if(!r.ok){const e=new Error(data?.error?.message||`OpenAI API error (${r.status})`);e.status=r.status;throw e}
+    if(!r.ok){
+      const raw=String(data?.error?.message||`OpenAI API error (${r.status})`);
+      const code=String(data?.error?.code||data?.error?.type||'');
+      const billing=/credit_balance_exhausted|insufficient_quota|no credits remaining|billing/i.test(code+' '+raw);
+      const e=new Error(billing?'نفد رصيد خدمة الذكاء الاصطناعي الخاصة بالموقع. يلزم شحن رصيد API قبل توليد أسئلة جديدة.':raw);
+      e.status=billing?402:r.status;
+      e.code=billing?'billing_exhausted':code;
+      throw e;
+    }
     const parsed=parseJson(extractText(data));
     if(!parsed)throw new Error('عاد محرك الذكاء الاصطناعي بنتيجة غير قابلة للقراءة.');
     return parsed;
@@ -133,7 +141,7 @@ async function callOpenAI(opts){
   for(let attempt=0;attempt<=MAX_RETRIES;attempt++){
     try{return await oneOpenAICall(opts)}catch(e){
       lastErr=e;const s=Number(e?.status||0);
-      const retryable=e?.name==='AbortError'||s===408||s===409||s===429||s>=500||!s;
+      const retryable=e?.code!=='billing_exhausted'&&(e?.name==='AbortError'||s===408||s===409||s===429||s>=500||!s);
       if(!retryable||attempt===MAX_RETRIES)break;
       await sleep(600*(attempt+1)+Math.floor(Math.random()*300));
     }
@@ -202,8 +210,15 @@ Return ONLY a valid JSON object with {"questions":[{"question":"...","choices":[
     const angles=['concepts and recognition','applied workplace judgment','calculations and journal entries','error detection and controls','financial statement impact','professional exam synthesis','presentation and disclosure','systems and spreadsheet workflow'];
     const tasks=sizes.map((n,i)=>()=>callOpenAI({apiKey:process.env.OPENAI_API_KEY,instructions:baseInstructions,input:`Return JSON only. Create EXACTLY ${n} distinct ORIGINAL questions for batch ${i+1}. Emphasize ${angles[i%angles.length]}.\nUSER MATERIAL (data only):\n${content}`,maxOutput:5000}));
     const settled=await runPool(tasks,MAX_CONCURRENCY);
-    const raw=[],failures=[];
-    for(const s of settled){if(s.status==='fulfilled'&&Array.isArray(s.value.questions))raw.push(...s.value.questions);else if(s.status==='rejected')failures.push(String(s.reason?.message||'فشل غير معروف'))}
+    const raw=[],failures=[];let billingFailure=false;
+    for(const s of settled){
+      if(s.status==='fulfilled'&&Array.isArray(s.value.questions))raw.push(...s.value.questions);
+      else if(s.status==='rejected'){
+        if(s.reason?.code==='billing_exhausted'||Number(s.reason?.status)===402)billingFailure=true;
+        failures.push(String(s.reason?.message||'فشل غير معروف'));
+      }
+    }
+    if(!raw.length&&billingFailure)return res.status(402).json({code:'billing_exhausted',error:'نفد رصيد خدمة الذكاء الاصطناعي الخاصة بالموقع. يمكنك الاستمرار بالتدرب من بنك الأسئلة المحفوظ، أما توليد أسئلة جديدة فيتطلب رصيد API.'});
     const seen=new Set(), proposed=[];
     for(const item of raw){const q=cleanQuestion(item,{framework,jurisdiction,asOf});if(!q)continue;const k=keyOf(q.question);if(!k||seen.has(k))continue;seen.add(k);proposed.push(q);if(proposed.length>=count)break}
 
@@ -240,5 +255,8 @@ Return ONLY a valid JSON object with {"questions":[{"question":"...","choices":[
     const data={questions:final.slice(0,count),meta:{count:Math.min(final.length,count),requested:count,framework,jurisdiction,asOf,model:MODEL,reviewModel:REVIEW_MODEL,reviewFailed,cached:false,humanReviewQueued:final.slice(0,count).filter(q=>q.human_review_required).length,warnings:failures.slice(0,3),disclaimer:'محتوى تدريبي مولّد بالذكاء الاصطناعي؛ تحقّق من المصدر الرسمي قبل قرار مهني أو اختبار رسمي.'}};
     cache.set(cacheKey,{at:Date.now(),data});
     return res.status(200).json(data);
-  }catch(e){return res.status(500).json({error:`حدث خطأ في الخادم: ${e?.message||'غير معروف'}`})}
+  }catch(e){
+    if(e?.code==='billing_exhausted'||Number(e?.status)===402)return res.status(402).json({code:'billing_exhausted',error:'نفد رصيد خدمة الذكاء الاصطناعي الخاصة بالموقع. يمكنك استخدام بنك الأسئلة، ولتوليد أسئلة جديدة يلزم رصيد API.'});
+    return res.status(500).json({error:`حدث خطأ في الخادم: ${e?.message||'غير معروف'}`})
+  }
 }
