@@ -77,6 +77,50 @@ function rateLimit(req){
 function cleanupCache(){
   const now=Date.now();for(const [k,v] of cache){if(now-v.at>CACHE_TTL_MS)cache.delete(k)}
 }
+function offlineFallbackQuestions({content,count,framework,jurisdiction,asOf,difficulty,type}){
+  const topic=cleanText(content,220);
+  const fLabel=frameworkLabel(framework);
+  const jLabel=jurisdictionLabel(jurisdiction);
+  const src=officialSource(framework,jurisdiction);
+  const base=[
+    ['case',`في موضوع «${topic}»، ما أول خطوة مهنية قبل إثبات أي قيد محاسبي؟`,'تحديد الوقائع الاقتصادية، وتحديد الإطار المحاسبي والاختصاص وتاريخ السريان قبل اختيار المعالجة.','تمنع هذه الخطوة خلط المعايير أو تطبيق معالجة خارج نطاقها.','analyze'],
+    ['short',`ما المعلومات التي يجب جمعها قبل تحليل «${topic}»؟`,'الوقائع الجوهرية، التواريخ، المبالغ، شروط العقد أو المستند، الأطراف ذات العلاقة، والإطار المحاسبي المطبق.','جودة الحكم المحاسبي تعتمد على اكتمال الوقائع قبل الاستنتاج.','understand'],
+    ['mcq',`أي إجراء هو الأفضل عند وجود تعارض بين وصف الحالة «${topic}» ومتطلبات الإطار المختار؟`,['اتباع وصف الحالة فقط','تطبيق الإطار المختار دون فحص النطاق','تحديد نطاق المعيار أولاً ثم مواءمة الوقائع معه','استخدام أي معالجة شائعة'], 'تحديد نطاق المعيار أولاً ثم مواءمة الوقائع معه','تحديد النطاق يسبق التطبيق ويقلل أخطاء التصنيف والاعتراف.','analyze'],
+    ['tf',`صح أم خطأ: يكفي اسم الموضوع «${topic}» وحده للوصول إلى معالجة محاسبية نهائية دون فحص الوقائع والتاريخ والاختصاص.`,['صح','خطأ'],'خطأ','المعالجة المحاسبية تعتمد على الوقائع الفعلية ونطاق المعيار وتاريخ السريان والاختصاص.','understand'],
+    ['case',`إذا ظهرت معلومة جديدة تغير جوهر حالة «${topic}»، كيف تتصرف مهنيًا؟`,'تعيد تقييم التصنيف والمعالجة والإفصاح من تاريخ المعلومة المناسبة، وتوثق أثر التغيير وفق الإطار المطبق.','المعلومات الجديدة قد تغير الحكم المحاسبي، لذلك لا يصح تثبيت الاستنتاج السابق آليًا.','evaluate'],
+    ['short',`كيف تتحقق من أن قيدًا مقترحًا في موضوع «${topic}» متوازن ومنطقي؟`,'تتأكد من تساوي إجمالي المدين والدائن، وأن كل حساب يعكس الأثر الاقتصادي للحالة، ثم تربط القيد بالاعتراف والقياس والعرض.','توازن القيد شرط أساسي لكنه لا يثبت وحده صحة المعالجة.','apply'],
+    ['mcq',`عند مراجعة إجابة تدريبية في «${topic}»، ما أقوى دليل على جودتها؟`,['صياغة طويلة','وجود أرقام كثيرة','اتساقها مع الوقائع والإطار والمصدر الرسمي','أنها تشبه سؤالاً مشهورًا'],'اتساقها مع الوقائع والإطار والمصدر الرسمي','الجودة المحاسبية تقاس بالاتساق مع الوقائع والقواعد المطبقة، لا بطول النص أو شهرته.','evaluate'],
+    ['case',`صمّم فحصًا رقابيًا قصيرًا لاكتشاف خطأ محتمل في معالجة «${topic}».`,'قارن المستندات الأصلية بالقيد والحسابات ذات الصلة، وافحص الموافقات والتوقيت وإعادة الأداء الحسابي، ثم وثق الاستثناءات.','إعادة الأداء وربط القيد بالمستندات من أكثر أساليب كشف الأخطاء العملية فاعلية.','create'],
+    ['short',`ما الفرق بين صحة القيد وصحة الإفصاح في حالة «${topic}»؟`,'قد يكون القياس والقيد صحيحين بينما يكون العرض أو الإفصاح ناقصًا؛ لذلك يجب تقييم الاعتراف والقياس والعرض والإفصاح كلٌ على حدة.','المعايير لا تقتصر على القيد؛ العرض والإفصاح جزء من الامتثال.','analyze'],
+    ['tf',`صح أم خطأ: إذا توازن القيد المتعلق بـ«${topic}» فهذا يثبت أن الاختيار المحاسبي صحيح.`,['صح','خطأ'],'خطأ','التوازن الحسابي لا يمنع استخدام حسابات أو توقيت أو معيار غير مناسب.','understand'],
+    ['case',`كيف توثق حكمًا محاسبيًا مهنيًا بشأن «${topic}» بحيث يمكن لمراجع آخر فهمه؟`,'وثّق الوقائع، المسألة، الإطار المطبق، البدائل، سبب الاختيار، الحسابات، المصدر الرسمي، وتاريخ السريان.','التوثيق الجيد يجعل الحكم قابلاً للمراجعة وإعادة الأداء.','apply'],
+    ['short',`ما المخاطر التي يجب الانتباه لها عند استخدام الذكاء الاصطناعي في موضوع «${topic}»؟`,'اختلاق مراجع أو فقرات، استخدام معيار قديم، تجاهل الاختصاص، أخطاء الأرقام والقيود، والثقة الزائدة في إجابة غير موثقة.','لذلك يجب الرجوع إلى المصدر الرسمي في المسائل المهنية أو عالية الحساسية.','evaluate'],
+    ['mcq',`إذا لم تكن متأكدًا من رقم فقرة معيارية مرتبطة بـ«${topic}»، فما التصرف الصحيح؟`,['اختيار رقم قريب','حذف رقم الفقرة والرجوع للمصدر الرسمي','نسخ رقم من مصدر غير رسمي','استخدام فقرة من معيار مختلف'],'حذف رقم الفقرة والرجوع للمصدر الرسمي','عدم اختلاق رقم الفقرة أكثر أمانًا من عرض مرجع دقيق غير متحقق.','apply'],
+    ['case',`افترض أنك تراجع ملف عمل عن «${topic}». ما الأدلة التي تطلبها قبل قبول المعالجة؟`,'اطلب العقود والفواتير والكشوف والموافقات والحسابات والمراسلات وأي مستند يثبت التوقيت والمبلغ والحقوق والالتزامات ذات الصلة.','الأدلة المناسبة تقلل الاعتماد على الافتراضات وتدعم الحكم المحاسبي.','analyze'],
+    ['short',`كيف تميّز بين خطأ محاسبي وخطأ عرض أو تصنيف في «${topic}»؟`,'افحص أولًا الاعتراف والقياس؛ إن كان المبلغ صحيحًا لكن الحساب أو العرض أو البند غير مناسب فالمشكلة تصنيف/عرض، أما إن كان المبلغ أو التوقيت أو الاعتراف خاطئًا فهي معالجة محاسبية.','هذا الفصل يساعد في تشخيص سبب الخطأ وتصحيحه بدقة.','analyze']
+  ];
+  const out=[];
+  for(let i=0;i<count;i++){
+    const x=base[i%base.length],cycle=Math.floor(i/base.length)+1;
+    let [qtype,qtext,choicesOrAnswer,answerOrExpl,explOrBloom,bloomMaybe]=x;
+    let choices=[],answer='',explanation='',bloom='';
+    if(qtype==='mcq'||qtype==='tf'){choices=choicesOrAnswer;answer=answerOrExpl;explanation=explOrBloom;bloom=bloomMaybe}
+    else {answer=choicesOrAnswer;explanation=answerOrExpl;bloom=explOrBloom}
+    if(cycle>1)qtext+=` — زاوية تدريبية ${cycle}`;
+    out.push({
+      question:qtext,choices,answer,explanation,
+      difficulty:difficulty==='mixed'?(i<4?'easy':i<10?'medium':'hard'):difficulty,
+      type:qtype,topic,reference:`${fLabel} — تحقق من المصدر الرسمي قبل الاستخدام المهني`,
+      paragraph_reference:'',learning_objective:'تطوير الحكم المحاسبي وربط الوقائع بالإطار المناسب',
+      bloom_level:bloom||'apply',why_wrong:qtype==='mcq'?choices.filter(c=>c!==answer).map(c=>`هذا البديل أضعف لأنه لا يحقق منهج التحليل المهني المطلوب.`):[],
+      verified:false,verification_confidence:0,verification_notes:'سؤال احتياطي مولّد محليًا عند تعذر خدمة الذكاء الاصطناعي؛ يحتاج الرجوع للمصدر الرسمي.',
+      standard_as_of:asOf,jurisdiction,framework,official_source:src,
+      human_review_required:true,human_review_reason:'محرك احتياطي محلي بسبب عدم توفر رصيد الذكاء الاصطناعي',
+      generation_mode:'local_fallback'
+    });
+  }
+  return out;
+}
 function cleanQuestion(q,meta={}){
   if(!q||typeof q.question!=='string'||typeof q.answer!=='string') return null;
   const question=cleanText(q.question,5000), answer=cleanText(q.answer,3000);
@@ -218,7 +262,11 @@ Return ONLY a valid JSON object with {"questions":[{"question":"...","choices":[
         failures.push(String(s.reason?.message||'فشل غير معروف'));
       }
     }
-    if(!raw.length&&billingFailure)return res.status(402).json({code:'billing_exhausted',error:'نفد رصيد خدمة الذكاء الاصطناعي الخاصة بالموقع. يمكنك الاستمرار بالتدرب من بنك الأسئلة المحفوظ، أما توليد أسئلة جديدة فيتطلب رصيد API.'});
+    if(!raw.length&&billingFailure){
+      const fallback=offlineFallbackQuestions({content,count,framework,jurisdiction,asOf,difficulty,type});
+      const data={questions:fallback,meta:{count:fallback.length,requested:count,framework,jurisdiction,asOf,mode:'local_fallback',cached:false,humanReviewQueued:fallback.length,warnings:['تم استخدام المحرك الاحتياطي المحلي لأن رصيد الذكاء الاصطناعي غير متاح.'],disclaimer:'الأسئلة الاحتياطية محلية وغير مراجعة بالذكاء الاصطناعي؛ تحقّق من المصدر الرسمي قبل قرار مهني أو اختبار رسمي.'}};
+      return res.status(200).json(data);
+    }
     const seen=new Set(), proposed=[];
     for(const item of raw){const q=cleanQuestion(item,{framework,jurisdiction,asOf});if(!q)continue;const k=keyOf(q.question);if(!k||seen.has(k))continue;seen.add(k);proposed.push(q);if(proposed.length>=count)break}
 
@@ -256,7 +304,10 @@ Return ONLY a valid JSON object with {"questions":[{"question":"...","choices":[
     cache.set(cacheKey,{at:Date.now(),data});
     return res.status(200).json(data);
   }catch(e){
-    if(e?.code==='billing_exhausted'||Number(e?.status)===402)return res.status(402).json({code:'billing_exhausted',error:'نفد رصيد خدمة الذكاء الاصطناعي الخاصة بالموقع. يمكنك استخدام بنك الأسئلة، ولتوليد أسئلة جديدة يلزم رصيد API.'});
+    if(e?.code==='billing_exhausted'||Number(e?.status)===402){
+      const fallback=offlineFallbackQuestions({content,count,framework,jurisdiction,asOf,difficulty,type});
+      return res.status(200).json({questions:fallback,meta:{count:fallback.length,requested:count,framework,jurisdiction,asOf,mode:'local_fallback',cached:false,humanReviewQueued:fallback.length,warnings:['تم استخدام المحرك الاحتياطي المحلي لأن رصيد الذكاء الاصطناعي غير متاح.'],disclaimer:'الأسئلة الاحتياطية محلية وغير مراجعة بالذكاء الاصطناعي؛ تحقّق من المصدر الرسمي قبل قرار مهني أو اختبار رسمي.'}});
+    }
     return res.status(500).json({error:`حدث خطأ في الخادم: ${e?.message||'غير معروف'}`})
   }
 }
